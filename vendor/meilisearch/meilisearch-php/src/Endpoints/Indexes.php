@@ -1,128 +1,191 @@
 <?php
 
+declare(strict_types=1);
+
 namespace MeiliSearch\Endpoints;
 
+use DateTime;
+use Exception;
 use MeiliSearch\Contracts\Endpoint;
 use MeiliSearch\Contracts\Http;
+use MeiliSearch\Contracts\Index\Settings;
 use MeiliSearch\Endpoints\Delegates\HandlesDocuments;
 use MeiliSearch\Endpoints\Delegates\HandlesSettings;
-use MeiliSearch\Exceptions\TimeOutException;
+use MeiliSearch\Endpoints\Delegates\HandlesTasks;
+use MeiliSearch\Exceptions\ApiException;
+use MeiliSearch\Search\SearchResult;
 
 class Indexes extends Endpoint
 {
     use HandlesDocuments;
     use HandlesSettings;
+    use HandlesTasks;
 
     protected const PATH = '/indexes';
 
-    /*
-     * @var string
-     */
-    private $uid;
+    private ?string $uid;
+    private ?string $primaryKey;
+    private ?string $createdAt;
+    private ?string $updatedAt;
+    private Tasks $tasks;
 
-    public function __construct(Http $http, $uid = null)
+    public function __construct(Http $http, $uid = null, $primaryKey = null, $createdAt = null, $updatedAt = null)
     {
         $this->uid = $uid;
+        $this->primaryKey = $primaryKey;
+        $this->createdAt = $createdAt;
+        $this->updatedAt = $updatedAt;
+        $this->tasks = new Tasks($http);
+
         parent::__construct($http);
     }
 
+    protected function newInstance(array $attributes): self
+    {
+        return new self(
+            $this->http,
+            $attributes['uid'],
+            $attributes['primaryKey'],
+            $attributes['createdAt'],
+            $attributes['updatedAt'],
+        );
+    }
+
     /**
-     * @param array $options
-     *
      * @return $this
-     *
-     * @throws Exceptions\HTTPRequestException
      */
-    public function create(string $uid, $options = []): self
+    protected function fill(array $attributes): self
+    {
+        $this->uid = $attributes['uid'];
+        $this->primaryKey = $attributes['primaryKey'];
+        $this->createdAt = $attributes['createdAt'];
+        $this->updatedAt = $attributes['updatedAt'];
+
+        return $this;
+    }
+
+    /**
+     * @throws Exception|ApiException
+     */
+    public function create(string $uid, array $options = []): array
     {
         $options['uid'] = $uid;
 
-        $response = $this->http->post(self::PATH, $options);
-
-        return new self($this->http, $response['uid']);
+        return $this->http->post(self::PATH, $options);
     }
 
     public function all(): array
     {
         $indexes = [];
 
-        foreach ($this->http->get(self::PATH) as $index) {
-            $indexes[] = new self($this->http, $index['uid']);
+        foreach ($this->allRaw() as $index) {
+            $indexes[] = $this->newInstance($index);
         }
 
         return $indexes;
     }
 
-    public function getPrimaryKey(): ?string
+    public function allRaw(): array
     {
-        return $this->show()['primaryKey'];
+        return $this->http->get(self::PATH);
     }
 
-    public function getUid(): string
+    public function getPrimaryKey(): ?string
+    {
+        return $this->primaryKey;
+    }
+
+    public function fetchPrimaryKey(): ?string
+    {
+        return $this->fetchInfo()->getPrimaryKey();
+    }
+
+    public function getUid(): ?string
     {
         return $this->uid;
     }
 
-    public function show(): ?array
+    public function getCreatedAt(): ?DateTime
+    {
+        return static::parseDate($this->createdAt);
+    }
+
+    public function getCreatedAtString(): ?string
+    {
+        return $this->createdAt;
+    }
+
+    public function getUpdatedAt(): ?DateTime
+    {
+        return static::parseDate($this->updatedAt);
+    }
+
+    public function getUpdatedAtString(): ?string
+    {
+        return $this->updatedAt;
+    }
+
+    public function fetchRawInfo(): ?array
     {
         return $this->http->get(self::PATH.'/'.$this->uid);
     }
 
+    public function fetchInfo(): self
+    {
+        $response = $this->fetchRawInfo();
+
+        return $this->fill($response);
+    }
+
     public function update($body): array
     {
-        return  $this->http->put(self::PATH.'/'.$this->uid, $body);
+        return $this->http->put(self::PATH.'/'.$this->uid, $body);
     }
 
-    public function delete(): void
+    public function delete(): array
     {
-        $this->http->delete(self::PATH.'/'.$this->uid);
+        return $this->http->delete(self::PATH.'/'.$this->uid) ?? [];
     }
 
-    // Updates
+    // Tasks
 
-    public function getUpdateStatus($updateId): array
+    public function getTask($uid): array
     {
-        return $this->http->get(self::PATH.'/'.$this->uid.'/updates/'.$updateId);
+        return $this->http->get(self::PATH.'/'.$this->uid.'/tasks'.'/'.$uid);
     }
 
-    public function getAllUpdateStatus(): array
+    public function getTasks(): array
     {
-        return $this->http->get(self::PATH.'/'.$this->uid.'/updates');
-    }
-
-    /**
-     * @param $update_id
-     * @param int $timeout_in_ms
-     * @param int $interval_in_ms
-     *
-     * @return mixed
-     *
-     * @throws TimeOutException
-     */
-    public function waitForPendingUpdate($update_id, $timeout_in_ms = 5000, $interval_in_ms = 50): array
-    {
-        $timeout_temp = 0;
-        while ($timeout_in_ms > $timeout_temp) {
-            $res = $this->getUpdateStatus($update_id);
-            if ('enqueued' != $res['status']) {
-                return $res;
-            }
-            $timeout_temp += $interval_in_ms;
-            usleep(1000 * $interval_in_ms);
-        }
-        throw new TimeOutException();
+        return $this->http->get(self::PATH.'/'.$this->uid.'/tasks');
     }
 
     // Search
 
-    public function search($query, array $options = []): array
+    /**
+     * @return SearchResult|array
+     */
+    public function search(?string $query, array $searchParams = [], array $options = [])
+    {
+        $result = $this->rawSearch($query, $searchParams);
+
+        if (\array_key_exists('raw', $options) && $options['raw']) {
+            return $result;
+        }
+
+        $searchResult = new SearchResult($result);
+        $searchResult->applyOptions($options);
+
+        return $searchResult;
+    }
+
+    public function rawSearch(?string $query, array $searchParams = []): array
     {
         $parameters = array_merge(
             ['q' => $query],
-            $this->parseOptions($options)
+            $searchParams
         );
 
-        return $this->http->get(self::PATH.'/'.$this->uid.'/search', $parameters);
+        return $this->http->post(self::PATH.'/'.$this->uid.'/search', $parameters);
     }
 
     // Stats
@@ -136,7 +199,8 @@ class Indexes extends Endpoint
 
     public function getSettings(): array
     {
-        return $this->http->get(self::PATH.'/'.$this->uid.'/settings');
+        return (new Settings($this->http->get(self::PATH.'/'.$this->uid.'/settings')))
+            ->getIterator()->getArrayCopy();
     }
 
     public function updateSettings($settings): array
@@ -149,16 +213,23 @@ class Indexes extends Endpoint
         return $this->http->delete(self::PATH.'/'.$this->uid.'/settings');
     }
 
-    private function parseOptions(array $options): array
+    /**
+     * @throws Exception
+     */
+    public static function parseDate(?string $dateTime): ?DateTime
     {
-        foreach ($options as $key => $value) {
-            if ('facetsDistribution' === $key || 'facetFilters' === $key) {
-                $options[$key] = json_encode($value);
-            } elseif (is_array($value)) {
-                $options[$key] = implode(',', $value);
-            }
+        if (null === $dateTime) {
+            return null;
         }
 
-        return $options;
+        try {
+            return new DateTime($dateTime);
+        } catch (\Exception $e) {
+            // Trim 9th+ digit from fractional seconds. Meilisearch server can send 9 digits; PHP supports up to 8
+            $trimPattern = '/(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,8})(?:\d{1,})?(Z|[\+-]\d{2}:\d{2})$/';
+            $trimmedDate = preg_replace($trimPattern, '$1$2', $dateTime);
+
+            return new DateTime($trimmedDate);
+        }
     }
 }

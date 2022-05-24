@@ -9,7 +9,12 @@
     License: MIT
     */
 
-    require_once __DIR__ . '/vendor/autoload.php';
+    //** Be sure vendor autoloader exists */
+    if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
+        require_once ( __DIR__ . '/vendor/autoload.php' );
+    } else {
+        throw new Exception( sprintf( 'Distributive is broken. %s file is missed. Try to remove and upload plugin again.', __DIR__ . '/vendor/autoload.php' ) );
+    }
     require_once __DIR__ . '/src/search_widget.php';
     require_once __DIR__ . '/src/admin/meilisearch_admin.php';
     require_once __DIR__ . '/src/admin/utils.php';

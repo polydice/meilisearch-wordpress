@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace MeiliSearch\Delegates;
 
 trait HandlesSystem
@@ -9,19 +11,20 @@ trait HandlesSystem
         return $this->health->show();
     }
 
+    public function isHealthy(): bool
+    {
+        try {
+            $this->health->show();
+        } catch (\Exception $e) {
+            return false;
+        }
+
+        return true;
+    }
+
     public function version(): array
     {
         return $this->version->show();
-    }
-
-    public function sysInfo(): array
-    {
-        return $this->sysInfo->show();
-    }
-
-    public function prettySysInfo(): array
-    {
-        return $this->sysInfo->pretty();
     }
 
     public function stats(): array
@@ -29,8 +32,8 @@ trait HandlesSystem
         return $this->stats->show();
     }
 
-    public function getKeys(): array
+    public function generateTenantToken($searchRules, ?array $options = []): string
     {
-        return $this->keys->show();
+        return $this->tenantToken->generateTenantToken($searchRules, $options);
     }
 }

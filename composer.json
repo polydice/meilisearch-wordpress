@@ -1,5 +1,14 @@
 {
+    "name": "meilisearch/meilisearch-wordpress",
+    "description": "WordPress plugin for Meilisearch.",
+    "type": "wordpress-plugin",
     "require": {
-        "meilisearch/meilisearch-php": "^0.12.0"
+        "meilisearch/meilisearch-php": "^0.23.2",
+        "composer/installers": "^1.0 || ^2.0"
+    },
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true
+        }
     }
 }
